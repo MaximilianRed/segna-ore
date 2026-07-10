@@ -36,6 +36,14 @@
   }
   input:focus{border-color:var(--accent);}
 
+  /* checkbox dei viaggi */
+  .trips{display:flex; gap:8px; margin-top:12px;}
+  .chk{display:flex; flex:1; align-items:center; gap:8px; background:var(--card2);
+    border:1px solid var(--line); border-radius:12px; padding:12px; font-size:15px;
+    color:var(--text); cursor:pointer; user-select:none; margin-bottom:0;}
+  .chk input{width:20px; height:20px; accent-color:var(--green); flex:none; margin:0;}
+  .chk.disab{opacity:.55;}
+
   .timer{text-align:center; font-variant-numeric:tabular-nums; font-weight:700; letter-spacing:1px;
     font-size:46px; margin:6px 0 4px;}
   .timer.idle{color:var(--muted);}
@@ -50,6 +58,7 @@
   .bigbtn:active{transform:scale(.98);}
   .bigbtn.arrivo{background:linear-gradient(180deg,var(--green),var(--green-d));}
   .bigbtn.finito{background:linear-gradient(180deg,var(--red),var(--red-d));}
+  .bigbtn:disabled{opacity:.7;}
 
   .row{display:flex; gap:10px;}
   .row > *{flex:1;}
@@ -67,8 +76,9 @@
   .job .top{display:flex; justify-content:space-between; align-items:baseline; gap:8px;}
   .job .name{font-weight:600; font-size:16px;}
   .job .cost{font-weight:700; font-size:18px; color:var(--green); white-space:nowrap;}
-  .job .meta{color:var(--muted); font-size:12.5px; margin-top:5px; line-height:1.5;}
+  .job .meta{color:var(--muted); font-size:12.5px; margin-top:5px; line-height:1.6;}
   .job .meta .iva{color:#cbd5e1;}
+  .job .meta .trip{color:#fbbf24;}
   .job .delrow{display:flex; justify-content:flex-end; margin-top:2px;}
   .job .del{background:none; color:var(--muted); font-size:13px; padding:4px 6px; margin:-2px -6px -2px 0;}
   .empty{color:var(--muted); text-align:center; padding:24px 0; font-size:14px;}
@@ -78,6 +88,10 @@
   .rate-line{font-size:13px; color:var(--muted); text-align:center; margin-top:10px;}
   .rate-line b{color:var(--text);}
   .hint{font-size:12px; color:var(--muted); margin-top:8px;}
+  .sede-btn{width:100%; padding:12px; border-radius:12px; background:var(--card2);
+    border:1px solid var(--accent); color:var(--accent); font-size:15px; font-weight:600;}
+  .sede-btn:active{transform:scale(.98);}
+  .sede-ok{color:var(--green);}
 </style>
 </head>
 <body>
@@ -88,6 +102,11 @@
 <div class="card">
   <label for="cliente">Cliente / Lavoro</label>
   <input type="text" id="cliente" placeholder="Es. Rossi Mario — Via Roma 5" autocomplete="off">
+
+  <div class="trips" id="tripsRow">
+    <label class="chk"><input type="checkbox" id="chkAndata" checked> 🚗 Andata</label>
+    <label class="chk"><input type="checkbox" id="chkRitorno" checked> 🏠 Ritorno</label>
+  </div>
 
   <div class="timer idle" id="timer">00:00:00</div>
   <div class="sub" id="subText">Premi «Arrivo» quando inizi</div>
@@ -114,6 +133,23 @@
       <input type="number" id="arrotonda" inputmode="numeric" min="0" step="1" value="15">
     </div>
     <div class="hint">Arrotonda a 15 = fatturi a quarti d'ora (es. 1h05 → 1h15). Metti 0 per il tempo esatto.</div>
+
+    <div class="row" style="margin-top:14px;">
+      <div>
+        <label for="travelRate">Tariffa viaggio (€/h)</label>
+        <input type="number" id="travelRate" inputmode="decimal" min="0" step="1" value="60">
+      </div>
+      <div>
+        <label for="speed">Velocità media (km/h)</label>
+        <input type="number" id="speed" inputmode="numeric" min="5" step="5" value="50">
+      </div>
+    </div>
+
+    <div style="margin-top:14px;">
+      <label>Posizione della sede (serve per calcolare i viaggi)</label>
+      <button class="sede-btn" id="sedeBtn">📍 Salva posizione sede</button>
+      <div class="hint" id="sedeStatus">Sede non salvata — premi il bottone quando sei in sede.</div>
+    </div>
   </div>
 </div>
 
@@ -137,21 +173,21 @@
   const LS_JOBS = "segnaore_jobs";
   const LS_CFG  = "segnaore_cfg";
   const LS_ACTIVE = "segnaore_active";
+  const ROAD_FACTOR = 1.3; // linea d'aria → distanza stradale stimata
 
   const $ = id => document.getElementById(id);
   const timerEl = $("timer"), subEl = $("subText"), mainBtn = $("mainBtn"),
-        clienteEl = $("cliente"), dot = $("statusDot");
+        clienteEl = $("cliente"), dot = $("statusDot"),
+        chkAndata = $("chkAndata"), chkRitorno = $("chkRitorno");
 
-  const DEFAULTS = {rate:60, round:15, iva:22, v:2};
+  const DEFAULTS = {rate:60, round:15, iva:22, travelRate:60, speed:50, sede:null, v:2};
   let cfg = load(LS_CFG, null);
-  // prima volta o configurazione vecchia → imposta i default richiesti (60€ + IVA 22% + 15 min)
-  if(!cfg || cfg.v !== 2){
-    cfg = Object.assign({}, DEFAULTS);
-    save(LS_CFG, cfg);
-  }
+  if(!cfg || cfg.v !== 2){ cfg = Object.assign({}, DEFAULTS); }
+  else { cfg = Object.assign({}, DEFAULTS, cfg); } // aggiunge i campi nuovi alle config vecchie
+  save(LS_CFG, cfg);
 
   let jobs = load(LS_JOBS, []);
-  let active = load(LS_ACTIVE, null); // {cliente, start}
+  let active = load(LS_ACTIVE, null); // {cliente, start, andata, ritorno, pos}
   let tick = null;
 
   // ---- util ----
@@ -169,6 +205,13 @@
     const d = new Date(ts);
     return pad(d.getDate())+"/"+pad(d.getMonth()+1)+" "+pad(d.getHours())+":"+pad(d.getMinutes());
   }
+  // distanza in km tra due punti GPS (formula dell'emisenoverso)
+  function kmTra(a, b){
+    const R = 6371, rad = x => x*Math.PI/180;
+    const dLat = rad(b.lat-a.lat), dLon = rad(b.lon-a.lon);
+    const s = Math.sin(dLat/2)**2 + Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(dLon/2)**2;
+    return 2*R*Math.asin(Math.sqrt(s));
+  }
   // durata fatturabile in ore, con arrotondamento opzionale
   function billableHours(ms){
     let min = ms/60000;
@@ -176,28 +219,81 @@
     if(r>0) min = Math.ceil(min/r)*r;
     return min/60;
   }
-  // calcola imponibile / iva / totale da una durata in ms
-  function calc(ms){
+  // costo del solo lavoro da una durata in ms
+  function calcLavoro(ms){
     const rate = Number(cfg.rate)||0;
-    const ivaP = Number(cfg.iva)||0;
-    const imponibile = billableHours(ms) * rate;
-    const iva = imponibile * ivaP/100;
-    return { imponibile, iva, totale: imponibile+iva, rate, ivaP };
+    return { imponibile: billableHours(ms)*rate, rate, ivaP: Number(cfg.iva)||0 };
+  }
+  // stima dei viaggi (null se non richiesti o senza GPS)
+  function calcViaggio(){
+    if(!active || !(active.andata||active.ritorno) || !active.pos || !cfg.sede) return null;
+    const km = kmTra(cfg.sede, active.pos) * ROAD_FACTOR;
+    const speed = Math.max(5, Number(cfg.speed)||50);
+    const minLeg = km/speed*60;
+    const legs = (active.andata?1:0) + (active.ritorno?1:0);
+    const tRate = Number(cfg.travelRate)||0;
+    return {
+      andata: !!active.andata, ritorno: !!active.ritorno,
+      km: km, minAndata: active.andata?minLeg:0, minRitorno: active.ritorno?minLeg:0,
+      rate: tRate, cost: (minLeg*legs)/60*tRate
+    };
   }
 
   // ---- config UI ----
   $("rate").value = cfg.rate;
   $("iva").value = cfg.iva;
   $("arrotonda").value = cfg.round;
+  $("travelRate").value = cfg.travelRate;
+  $("speed").value = cfg.speed;
   function refreshRateLabel(){
     $("rateLabel").textContent = (Number(cfg.rate)||0)+" €/h + IVA "+(Number(cfg.iva)||0)+"%";
   }
-  refreshRateLabel();
+  function refreshSedeStatus(){
+    const el = $("sedeStatus");
+    if(cfg.sede){
+      el.textContent = "Sede salvata ✔ — ripremi il bottone (dalla sede) se ti trasferisci.";
+      el.classList.add("sede-ok");
+    } else {
+      el.textContent = "Sede non salvata — premi il bottone quando sei in sede.";
+      el.classList.remove("sede-ok");
+    }
+  }
 
   $("settingsToggle").addEventListener("click", ()=> $("settingsBox").classList.toggle("hidden"));
   $("rate").addEventListener("input", e=>{ cfg.rate = parseFloat(e.target.value)||0; save(LS_CFG,cfg); refreshRateLabel(); if(active) updateTimer(); });
   $("iva").addEventListener("input", e=>{ cfg.iva = parseFloat(e.target.value)||0; save(LS_CFG,cfg); refreshRateLabel(); if(active) updateTimer(); });
   $("arrotonda").addEventListener("input", e=>{ cfg.round = parseInt(e.target.value)||0; save(LS_CFG,cfg); if(active) updateTimer(); });
+  $("travelRate").addEventListener("input", e=>{ cfg.travelRate = parseFloat(e.target.value)||0; save(LS_CFG,cfg); });
+  $("speed").addEventListener("input", e=>{ cfg.speed = parseInt(e.target.value)||0; save(LS_CFG,cfg); });
+
+  // ---- GPS ----
+  function gpsErrText(err){
+    if(err && err.code===1) return "Permesso negato: attiva la localizzazione per questo sito nelle impostazioni del browser.";
+    if(err && err.code===3) return "Tempo scaduto: riprova (GPS acceso? cielo aperto?).";
+    return "Posizione non disponibile: riprova tra poco.";
+  }
+  $("sedeBtn").addEventListener("click", ()=>{
+    if(!navigator.geolocation){ alert("Questo browser non permette di leggere la posizione."); return; }
+    $("sedeStatus").textContent = "📡 Sto leggendo la posizione…";
+    navigator.geolocation.getCurrentPosition(p=>{
+      cfg.sede = {lat:p.coords.latitude, lon:p.coords.longitude};
+      save(LS_CFG, cfg);
+      refreshSedeStatus();
+      alert("Posizione della sede salvata ✔\nOra i viaggi verranno stimati da qui.");
+    }, err=>{
+      refreshSedeStatus();
+      alert("Non sono riuscito a leggere la posizione.\n"+gpsErrText(err));
+    }, {enableHighAccuracy:true, timeout:15000, maximumAge:60000});
+  });
+  // legge la posizione dal cliente (silenziosa: se fallisce riproviamo al Finito)
+  function readClientPos(){
+    if(!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(p=>{
+      if(!active) return;
+      active.pos = {lat:p.coords.latitude, lon:p.coords.longitude};
+      save(LS_ACTIVE, active);
+    }, ()=>{}, {enableHighAccuracy:true, timeout:20000, maximumAge:120000});
+  }
 
   // ---- timer ----
   function startTick(){ stopTick(); tick = setInterval(updateTimer, 1000); updateTimer(); }
@@ -206,27 +302,35 @@
     if(!active) return;
     const ms = Date.now() - active.start;
     timerEl.textContent = fmtDur(ms);
-    const c = calc(ms);
-    subEl.innerHTML = "In corso · <b>"+euro(c.imponibile)+"</b> + IVA = "+euro(c.totale);
+    const w = calcLavoro(ms);
+    const trips = (active.andata||active.ritorno) ? "  ·  🚗 viaggi al termine" : "";
+    subEl.innerHTML = "In corso · <b>"+euro(w.imponibile)+"</b> + IVA"+trips;
   }
 
   function renderActiveState(){
     if(active){
       clienteEl.value = active.cliente;
       clienteEl.disabled = true;
+      chkAndata.checked = !!active.andata;  chkAndata.disabled = true;
+      chkRitorno.checked = !!active.ritorno; chkRitorno.disabled = true;
+      document.querySelectorAll(".chk").forEach(e=>e.classList.add("disab"));
       timerEl.classList.remove("idle");
       dot.classList.add("live");
       mainBtn.textContent = "■ Finito";
       mainBtn.className = "bigbtn finito";
+      mainBtn.disabled = false;
       startTick();
     } else {
       clienteEl.disabled = false;
+      chkAndata.disabled = false; chkRitorno.disabled = false;
+      document.querySelectorAll(".chk").forEach(e=>e.classList.remove("disab"));
       timerEl.classList.add("idle");
       timerEl.textContent = "00:00:00";
       subEl.textContent = "Premi «Arrivo» quando inizi";
       dot.classList.remove("live");
       mainBtn.textContent = "▶ Arrivo";
       mainBtn.className = "bigbtn arrivo";
+      mainBtn.disabled = false;
       stopTick();
     }
   }
@@ -234,35 +338,62 @@
   // ---- azione principale ----
   mainBtn.addEventListener("click", ()=>{
     if(!active){
+      // ARRIVO
       const nome = clienteEl.value.trim() || "Senza nome";
-      active = { cliente: nome, start: Date.now() };
+      let andata = chkAndata.checked, ritorno = chkRitorno.checked;
+      if((andata||ritorno) && !cfg.sede){
+        alert("Per contare i viaggi devi prima salvare la posizione della sede:\n⚙ Modifica → 📍 Salva posizione sede (mentre sei in sede).\n\nQuesto lavoro parte SENZA viaggi.");
+        andata = false; ritorno = false;
+      }
+      active = { cliente: nome, start: Date.now(), andata: andata, ritorno: ritorno, pos: null };
       save(LS_ACTIVE, active);
+      if(andata||ritorno) readClientPos();
       renderActiveState();
     } else {
+      // FINITO
       const end = Date.now();
-      const ms = end - active.start;
-      const c = calc(ms);
-      const job = {
-        id: Date.now(),
-        cliente: active.cliente,
-        start: active.start,
-        end: end,
-        ms: ms,
-        rate: c.rate,
-        ivaP: c.ivaP,
-        imponibile: c.imponibile,
-        iva: c.iva,
-        totale: c.totale
-      };
-      jobs.unshift(job);
-      save(LS_JOBS, jobs);
-      active = null;
-      localStorage.removeItem(LS_ACTIVE);
-      clienteEl.value = "";
-      renderActiveState();
-      renderList();
+      if((active.andata||active.ritorno) && !active.pos && navigator.geolocation){
+        // ultimo tentativo di leggere il GPS prima di chiudere il lavoro
+        mainBtn.disabled = true;
+        mainBtn.textContent = "📡 Leggo il GPS…";
+        navigator.geolocation.getCurrentPosition(
+          p=>{ active.pos = {lat:p.coords.latitude, lon:p.coords.longitude}; finishJob(end); },
+          ()=>{ finishJob(end); }, // niente GPS → salva senza viaggi
+          {enableHighAccuracy:true, timeout:10000, maximumAge:300000}
+        );
+      } else {
+        finishJob(end);
+      }
     }
   });
+
+  function finishJob(end){
+    const ms = end - active.start;
+    const w = calcLavoro(ms);
+    const v = calcViaggio(); // null se niente viaggi
+    const vCost = v ? v.cost : 0;
+    const imponibile = w.imponibile + vCost;
+    const iva = imponibile * w.ivaP/100;
+    const gpsFallito = (active.andata||active.ritorno) && !v;
+    const job = {
+      id: Date.now(),
+      cliente: active.cliente,
+      start: active.start, end: end, ms: ms,
+      rate: w.rate, ivaP: w.ivaP,
+      lavoro: w.imponibile,
+      viaggio: v,
+      imponibile: imponibile, iva: iva, totale: imponibile+iva
+    };
+    jobs.unshift(job);
+    save(LS_JOBS, jobs);
+    active = null;
+    localStorage.removeItem(LS_ACTIVE);
+    clienteEl.value = "";
+    chkAndata.checked = true; chkRitorno.checked = true;
+    renderActiveState();
+    renderList();
+    if(gpsFallito) alert("⚠ Non sono riuscito a leggere il GPS: lavoro salvato SENZA viaggi.\nPuoi aggiungerli a mano in fattura.");
+  }
 
   // ---- storico ----
   function renderList(){
@@ -282,10 +413,18 @@
     jobs.forEach(j=>{
       const el = document.createElement("div");
       el.className = "job";
+      let tripHtml = "";
+      if(j.viaggio){
+        const v = j.viaggio, parts = [];
+        if(v.andata) parts.push("🚗 andata "+Math.round(v.minAndata)+" min");
+        if(v.ritorno) parts.push("🏠 ritorno "+Math.round(v.minRitorno)+" min");
+        tripHtml = '<div class="trip">'+parts.join(" · ")+" · ~"+(Math.round(v.km*10)/10).toLocaleString("it-IT")+" km · "+euro(v.cost)+'</div>';
+      }
       el.innerHTML =
         '<div class="top"><span class="name"></span><span class="cost">'+euro(j.totale||0)+'</span></div>'+
         '<div class="meta">'+
           '<div class="when"></div>'+
+          tripHtml+
           '<div class="iva">Imponibile '+euro(j.imponibile||0)+'  ·  + IVA '+(j.ivaP||0)+'% '+euro(j.iva||0)+'</div>'+
         '</div>'+
         '<div class="delrow"><button class="del">Elimina</button></div>';
@@ -307,14 +446,19 @@
   $("exportBtn").addEventListener("click", ()=>{
     if(jobs.length===0){ alert("Nessun dato da esportare."); return; }
     const num = n => (Math.round(n*100)/100).toFixed(2).replace(".",",");
-    const rows = [["Cliente","Inizio","Fine","Durata","Tariffa €/h","Imponibile €","IVA %","IVA €","Totale €"]];
+    const rows = [["Cliente","Inizio","Fine","Durata lavoro","Tariffa €/h","Lavoro €","Viaggio min","Viaggio km","Viaggio €","Imponibile €","IVA %","IVA €","Totale €"]];
     jobs.slice().reverse().forEach(j=>{
+      const v = j.viaggio;
       rows.push([
         j.cliente,
         new Date(j.start).toLocaleString("it-IT"),
         new Date(j.end).toLocaleString("it-IT"),
         fmtDur(j.ms),
         String(j.rate||0).replace(".",","),
+        num(j.lavoro!=null ? j.lavoro : (j.imponibile||0)),
+        v ? String(Math.round(v.minAndata+v.minRitorno)) : "0",
+        v ? num(v.km) : "0",
+        v ? num(v.cost) : "0,00",
         num(j.imponibile||0),
         String(j.ivaP||0).replace(".",","),
         num(j.iva||0),
@@ -333,6 +477,7 @@
 
   // ---- avvio ----
   refreshRateLabel();
+  refreshSedeStatus();
   renderActiveState();
   renderList();
 })();
