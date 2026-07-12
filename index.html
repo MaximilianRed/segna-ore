@@ -148,6 +148,7 @@
         <input type="number" id="speed" inputmode="numeric" min="5" step="5" value="50">
       </div>
     </div>
+    <div class="hint">Il tempo di viaggio è calcolato sul <b>percorso stradale reale</b> (serve internet al momento del «Finito»). Senza internet: stima in linea d'aria con la velocità media.</div>
 
     <div style="margin-top:14px;">
       <label for="sedeIndirizzo">Posizione della sede (serve per calcolare i viaggi)</label>
@@ -233,16 +234,40 @@
     const rate = Number(cfg.rate)||0;
     return { imponibile: billableHours(ms)*rate, rate, ivaP: Number(cfg.iva)||0 };
   }
-  // stima dei viaggi (null se non richiesti o senza GPS)
-  function calcViaggio(){
+  // percorso stradale reale sede→cliente (OSRM/OpenStreetMap, serve internet).
+  // Ritorna {km, min} oppure null se non raggiungibile.
+  async function percorsoReale(a, b){
+    const url = "https://router.project-osrm.org/route/v1/driving/"
+      + a.lon + "," + a.lat + ";" + b.lon + "," + b.lat + "?overview=false";
+    const ctrl = new AbortController();
+    const t = setTimeout(()=>ctrl.abort(), 8000);
+    try{
+      const r = await fetch(url, {signal: ctrl.signal});
+      const j = await r.json();
+      if(j.code === "Ok" && j.routes && j.routes[0]){
+        return { km: j.routes[0].distance/1000, min: j.routes[0].duration/60 };
+      }
+      return null;
+    }catch(e){ return null; }
+    finally{ clearTimeout(t); }
+  }
+  // calcolo dei viaggi: usa il percorso reale se disponibile, altrimenti la stima
+  // in linea d'aria ×1.3 alla velocità media (null se non richiesti o senza GPS)
+  function calcViaggio(route){
     if(!active || !(active.andata||active.ritorno) || !active.pos || !cfg.sede) return null;
-    const km = kmTra(cfg.sede, active.pos) * ROAD_FACTOR;
-    const speed = Math.max(5, Number(cfg.speed)||50);
-    const minLeg = km/speed*60;
+    let km, minLeg, metodo;
+    if(route){
+      km = route.km; minLeg = route.min; metodo = "percorso";
+    } else {
+      km = kmTra(cfg.sede, active.pos) * ROAD_FACTOR;
+      const speed = Math.max(5, Number(cfg.speed)||50);
+      minLeg = km/speed*60;
+      metodo = "stima";
+    }
     const legs = (active.andata?1:0) + (active.ritorno?1:0);
     const tRate = Number(cfg.travelRate)||0;
     return {
-      andata: !!active.andata, ritorno: !!active.ritorno,
+      andata: !!active.andata, ritorno: !!active.ritorno, metodo: metodo,
       km: km, minAndata: active.andata?minLeg:0, minRitorno: active.ritorno?minLeg:0,
       rate: tRate, cost: (minLeg*legs)/60*tRate
     };
@@ -415,10 +440,16 @@
     }
   });
 
-  function finishJob(end){
+  async function finishJob(end){
+    let route = null;
+    if(active && (active.andata||active.ritorno) && active.pos && cfg.sede){
+      mainBtn.disabled = true;
+      mainBtn.textContent = "🗺 Calcolo il percorso…";
+      route = await percorsoReale(cfg.sede, active.pos); // null se offline → si usa la stima
+    }
     const ms = end - active.start;
     const w = calcLavoro(ms);
-    const v = calcViaggio(); // null se niente viaggi
+    const v = calcViaggio(route); // null se niente viaggi
     const vCost = v ? v.cost : 0;
     const imponibile = w.imponibile + vCost;
     const iva = imponibile * w.ivaP/100;
@@ -466,7 +497,8 @@
         const v = j.viaggio, parts = [];
         if(v.andata) parts.push("🚗 andata "+Math.round(v.minAndata)+" min");
         if(v.ritorno) parts.push("🏠 ritorno "+Math.round(v.minRitorno)+" min");
-        tripHtml = '<div class="trip">'+parts.join(" · ")+" · ~"+(Math.round(v.km*10)/10).toLocaleString("it-IT")+" km · "+euro(v.cost)+'</div>';
+        const metodo = v.metodo==="percorso" ? "🗺 percorso" : "≈ stima";
+        tripHtml = '<div class="trip">'+parts.join(" · ")+" · "+(Math.round(v.km*10)/10).toLocaleString("it-IT")+" km · "+euro(v.cost)+" · "+metodo+'</div>';
       }
       el.innerHTML =
         '<div class="top"><span class="name"></span><span class="cost">'+euro(j.totale||0)+'</span></div>'+
@@ -494,7 +526,7 @@
   $("exportBtn").addEventListener("click", ()=>{
     if(jobs.length===0){ alert("Nessun dato da esportare."); return; }
     const num = n => (Math.round(n*100)/100).toFixed(2).replace(".",",");
-    const rows = [["Cliente","Inizio","Fine","Durata lavoro","Tariffa €/h","Lavoro €","Viaggio min","Viaggio km","Viaggio €","Imponibile €","IVA %","IVA €","Totale €"]];
+    const rows = [["Cliente","Inizio","Fine","Durata lavoro","Tariffa €/h","Lavoro €","Viaggio min","Viaggio km","Viaggio €","Viaggio calcolo","Imponibile €","IVA %","IVA €","Totale €"]];
     jobs.slice().reverse().forEach(j=>{
       const v = j.viaggio;
       rows.push([
@@ -507,6 +539,7 @@
         v ? String(Math.round(v.minAndata+v.minRitorno)) : "0",
         v ? num(v.km) : "0",
         v ? num(v.cost) : "0,00",
+        v ? (v.metodo==="percorso" ? "percorso reale" : "stima") : "",
         num(j.imponibile||0),
         String(j.ivaP||0).replace(".",","),
         num(j.iva||0),
