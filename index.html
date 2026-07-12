@@ -92,6 +92,10 @@
     border:1px solid var(--accent); color:var(--accent); font-size:15px; font-weight:600;}
   .sede-btn:active{transform:scale(.98);}
   .sede-ok{color:var(--green);}
+  .sede-res{display:block; width:100%; text-align:left; margin-top:8px; padding:11px 12px;
+    border-radius:12px; background:var(--card2); border:1px solid var(--line);
+    color:var(--text); font-size:14px; line-height:1.4;}
+  .sede-res:active{border-color:var(--accent);}
 </style>
 </head>
 <body>
@@ -146,9 +150,14 @@
     </div>
 
     <div style="margin-top:14px;">
-      <label>Posizione della sede (serve per calcolare i viaggi)</label>
-      <button class="sede-btn" id="sedeBtn">📍 Salva posizione sede</button>
-      <div class="hint" id="sedeStatus">Sede non salvata — premi il bottone quando sei in sede.</div>
+      <label for="sedeIndirizzo">Posizione della sede (serve per calcolare i viaggi)</label>
+      <input type="text" id="sedeIndirizzo" placeholder="Es. Via Roma 5, Milano" autocomplete="off">
+      <div class="row" style="margin-top:8px;">
+        <button class="sede-btn" id="sedeCercaBtn">🔎 Cerca indirizzo</button>
+        <button class="sede-btn" id="sedeBtn">📍 GPS attuale</button>
+      </div>
+      <div id="sedeRisultati"></div>
+      <div class="hint" id="sedeStatus">Sede non salvata — cerca l'indirizzo o usa il GPS quando sei in sede.</div>
     </div>
   </div>
 </div>
@@ -251,10 +260,12 @@
   function refreshSedeStatus(){
     const el = $("sedeStatus");
     if(cfg.sede){
-      el.textContent = "Sede salvata ✔ — ripremi il bottone (dalla sede) se ti trasferisci.";
+      el.textContent = cfg.sede.nome
+        ? "Sede salvata ✔ — " + cfg.sede.nome
+        : "Sede salvata ✔ (dalla posizione GPS).";
       el.classList.add("sede-ok");
     } else {
-      el.textContent = "Sede non salvata — premi il bottone quando sei in sede.";
+      el.textContent = "Sede non salvata — cerca l'indirizzo o usa il GPS quando sei in sede.";
       el.classList.remove("sede-ok");
     }
   }
@@ -276,7 +287,7 @@
     if(!navigator.geolocation){ alert("Questo browser non permette di leggere la posizione."); return; }
     $("sedeStatus").textContent = "📡 Sto leggendo la posizione…";
     navigator.geolocation.getCurrentPosition(p=>{
-      cfg.sede = {lat:p.coords.latitude, lon:p.coords.longitude};
+      cfg.sede = {lat:p.coords.latitude, lon:p.coords.longitude, nome:null};
       save(LS_CFG, cfg);
       refreshSedeStatus();
       alert("Posizione della sede salvata ✔\nOra i viaggi verranno stimati da qui.");
@@ -285,6 +296,43 @@
       alert("Non sono riuscito a leggere la posizione.\n"+gpsErrText(err));
     }, {enableHighAccuracy:true, timeout:15000, maximumAge:60000});
   });
+  // ricerca dell'indirizzo della sede (OpenStreetMap/Nominatim — serve internet solo qui)
+  function cercaIndirizzo(){
+    const q = $("sedeIndirizzo").value.trim();
+    if(!q){ alert("Scrivi l'indirizzo della sede, es. Via Roma 5, Milano"); return; }
+    const box = $("sedeRisultati");
+    box.innerHTML = '<div class="hint">🔎 Cerco l\'indirizzo…</div>';
+    fetch("https://nominatim.openstreetmap.org/search?format=json&limit=3&accept-language=it&q="+encodeURIComponent(q))
+      .then(r=>r.json())
+      .then(res=>{
+        if(!res.length){
+          box.innerHTML = '<div class="hint">Nessun risultato: prova ad aggiungere la città o il CAP.</div>';
+          return;
+        }
+        box.innerHTML = '<div class="hint">Tocca quello giusto:</div>';
+        res.forEach(r=>{
+          const b = document.createElement("button");
+          b.className = "sede-res";
+          b.textContent = "📌 " + r.display_name;
+          b.addEventListener("click", ()=>{
+            cfg.sede = {
+              lat: parseFloat(r.lat), lon: parseFloat(r.lon),
+              nome: r.display_name.split(",").slice(0,3).join(",")
+            };
+            save(LS_CFG, cfg);
+            box.innerHTML = "";
+            $("sedeIndirizzo").value = "";
+            refreshSedeStatus();
+          });
+          box.appendChild(b);
+        });
+      })
+      .catch(()=>{
+        box.innerHTML = '<div class="hint">⚠ Non riesco a cercare: serve internet per questa ricerca. Riprova.</div>';
+      });
+  }
+  $("sedeCercaBtn").addEventListener("click", cercaIndirizzo);
+  $("sedeIndirizzo").addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); cercaIndirizzo(); } });
   // legge la posizione dal cliente (silenziosa: se fallisce riproviamo al Finito)
   function readClientPos(){
     if(!navigator.geolocation) return;
