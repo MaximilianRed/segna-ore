@@ -143,7 +143,7 @@
       <label for="arrotonda">Arrotonda a (minuti)</label>
       <input type="number" id="arrotonda" inputmode="numeric" min="0" step="1" value="15">
     </div>
-    <div class="hint">Arrotonda a 15 = fatturi a quarti d'ora (es. 1h05 → 1h15). Metti 0 per il tempo esatto.</div>
+    <div class="hint">Arrotonda a 15 = fatturi a quarti d'ora. L'arrotondamento si applica <b>una volta sola sul tempo totale</b> (viaggi + lavoro), non alle singole voci. Metti 0 per il tempo esatto.</div>
 
     <div class="row" style="margin-top:14px;">
       <div>
@@ -232,6 +232,11 @@
     const d = new Date(ts);
     return pad(d.getDate())+"/"+pad(d.getMonth()+1)+" "+pad(d.getHours())+":"+pad(d.getMinutes());
   }
+  function fmtMin(min){
+    min = Math.round(min);
+    const h = Math.floor(min/60), m = min%60;
+    return h>0 ? h+"h "+pad(m)+"m" : m+" min";
+  }
   // distanza in km tra due punti GPS (formula dell'emisenoverso)
   function kmTra(a, b){
     const R = 6371, rad = x => x*Math.PI/180;
@@ -270,8 +275,8 @@
   }
   // calcolo dei viaggi: usa il percorso reale se disponibile, altrimenti la stima
   // in linea d'aria ×1.3 alla velocità media (null se non richiesti o senza GPS).
-  // Ogni tratta viene arrotondata allo stesso scaglione del lavoro (⚙ Arrotonda a),
-  // cosi' andata/lavoro/ritorno sono sempre blocchi puliti e il totale pure.
+  // I minuti delle tratte restano GREZZI: l'arrotondamento allo scaglione avviene
+  // una volta sola, sul tempo totale (viaggi + lavoro), dentro finishJob.
   function calcViaggio(route){
     if(!active || !(active.andata||active.ritorno) || !active.pos || !cfg.sede) return null;
     let km, minLeg, metodo;
@@ -283,7 +288,6 @@
       minLeg = km/speed*60;
       metodo = "stima";
     }
-    minLeg = billableHours(minLeg*60000) * 60; // arrotonda la tratta allo scaglione impostato
     const legs = (active.andata?1:0) + (active.ritorno?1:0);
     const tRate = Number(cfg.travelRate)||0;
     return {
@@ -468,18 +472,25 @@
       route = await percorsoReale(cfg.sede, active.pos); // null se offline → si usa la stima
     }
     const ms = end - active.start;
-    const w = calcLavoro(ms);
-    const v = calcViaggio(route); // null se niente viaggi
+    const rate = Number(cfg.rate)||0;
+    const ivaP = Number(cfg.iva)||0;
+    const v = calcViaggio(route); // null se niente viaggi; minuti grezzi
+    // UN SOLO arrotondamento: sul tempo totale (viaggi grezzi + lavoro grezzo).
+    // I minuti "di riempimento" per arrivare allo scaglione vengono fatturati come lavoro.
+    const minViaggi = v ? (v.minAndata + v.minRitorno) : 0;
+    const minFatturati = billableHours(ms + minViaggi*60000) * 60;
+    const lavoroCost = (minFatturati - minViaggi)/60 * rate;
     const vCost = v ? v.cost : 0;
-    const imponibile = w.imponibile + vCost;
-    const iva = imponibile * w.ivaP/100;
+    const imponibile = lavoroCost + vCost;
+    const iva = imponibile * ivaP/100;
     const gpsFallito = (active.andata||active.ritorno) && !v;
     const job = {
       id: Date.now(),
       cliente: active.cliente,
       start: active.start, end: end, ms: ms,
-      rate: w.rate, ivaP: w.ivaP,
-      lavoro: w.imponibile,
+      rate: rate, ivaP: ivaP,
+      lavoro: lavoroCost,
+      minFatturati: minFatturati,
       viaggio: v,
       imponibile: imponibile, iva: iva, totale: imponibile+iva
     };
@@ -531,7 +542,7 @@
         brkHtml+
         '<div class="meta">'+
           tripHtml+
-          '<div class="iva">Imponibile '+euro(j.imponibile||0)+'  ·  + IVA '+(j.ivaP||0)+'% '+euro(j.iva||0)+'</div>'+
+          '<div class="iva">'+(j.minFatturati ? "⏱ Fatturato "+fmtMin(j.minFatturati)+"  ·  " : "")+'Imponibile '+euro(j.imponibile||0)+'  ·  + IVA '+(j.ivaP||0)+'% '+euro(j.iva||0)+'</div>'+
         '</div>'+
         '<div class="delrow"><button class="del">Elimina</button></div>';
       el.querySelector(".name").textContent = j.cliente;
