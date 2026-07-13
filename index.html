@@ -6,7 +6,8 @@
 <meta name="theme-color" content="#0f172a">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>Segna Ore</title>
+<meta name="apple-mobile-web-app-title" content="Sul Posto">
+<title>Sul Posto</title>
 <style>
   :root{
     --bg:#0f172a; --card:#1e293b; --card2:#273549;
@@ -106,7 +107,7 @@
 </head>
 <body>
 
-<h1><span class="dot" id="statusDot"></span> Segna Ore</h1>
+<h1><span class="dot" id="statusDot"></span> Sul Posto</h1>
 
 <!-- Stato lavoro in corso / nuovo lavoro -->
 <div class="card">
@@ -165,6 +166,16 @@
       </div>
       <div id="sedeRisultati"></div>
       <div class="hint" id="sedeStatus">Sede non salvata — cerca l'indirizzo o usa il GPS quando sei in sede.</div>
+    </div>
+
+    <div style="margin-top:14px;">
+      <label>Backup dei dati (lavori + impostazioni)</label>
+      <div class="row">
+        <button class="sede-btn" id="backupBtn">💾 Scarica backup</button>
+        <button class="sede-btn" id="restoreBtn">📂 Ripristina</button>
+      </div>
+      <input type="file" id="restoreFile" accept=".json,application/json" class="hidden">
+      <div class="hint">«Scarica» salva un file con tutti i tuoi dati. «Ripristina» li ricarica — utile se cambi telefono o indirizzo dell'app.</div>
     </div>
   </div>
 </div>
@@ -534,6 +545,42 @@
     });
   }
 
+  // ---- backup / ripristino ----
+  $("backupBtn").addEventListener("click", ()=>{
+    const dati = { app:"sul-posto", versione:1, salvatoIl:new Date().toISOString(),
+                   cfg:cfg, jobs:jobs, attivo:active };
+    const blob = new Blob([JSON.stringify(dati)], {type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "sul-posto-backup-"+new Date().toISOString().slice(0,10)+".json";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
+  $("restoreBtn").addEventListener("click", ()=> $("restoreFile").click());
+  $("restoreFile").addEventListener("change", e=>{
+    const f = e.target.files[0];
+    e.target.value = "";
+    if(!f) return;
+    const lettore = new FileReader();
+    lettore.onload = ()=>{
+      try{
+        const d = JSON.parse(lettore.result);
+        if(!d || !Array.isArray(d.jobs)) throw new Error("formato non valido");
+        const quando = d.salvatoIl ? d.salvatoIl.slice(0,10) : "data sconosciuta";
+        if(!confirm("Ripristinare il backup?\n\n"+d.jobs.length+" lavori (salvato il "+quando+").\nI dati attuali su questo dispositivo verranno SOSTITUITI.")) return;
+        localStorage.setItem(LS_JOBS, JSON.stringify(d.jobs));
+        if(d.cfg) localStorage.setItem(LS_CFG, JSON.stringify(d.cfg));
+        if(d.attivo) localStorage.setItem(LS_ACTIVE, JSON.stringify(d.attivo));
+        else localStorage.removeItem(LS_ACTIVE);
+        location.reload();
+      }catch(err){
+        alert("Questo file non sembra un backup valido di Sul Posto.");
+      }
+    };
+    lettore.readAsText(f);
+  });
+
   // ---- export CSV ----
   $("exportBtn").addEventListener("click", ()=>{
     if(jobs.length===0){ alert("Nessun dato da esportare."); return; }
@@ -563,7 +610,7 @@
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "segna-ore-"+new Date().toISOString().slice(0,10)+".csv";
+    a.download = "sul-posto-"+new Date().toISOString().slice(0,10)+".csv";
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(url);
   });
