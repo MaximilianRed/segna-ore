@@ -15,6 +15,7 @@
     --green:#22c55e; --green-d:#16a34a;
     --red:#ef4444; --red-d:#dc2626;
     --accent:#38bdf8;
+    color-scheme: dark;
   }
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
   html,body{margin:0; padding:0;}
@@ -31,10 +32,11 @@
 
   .card{background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px; margin-bottom:16px;}
   label{display:block; font-size:13px; color:var(--muted); margin-bottom:6px;}
-  input[type=text], input[type=number]{
+  input[type=text], input[type=number], input[type=datetime-local]{
     width:100%; background:var(--card2); border:1px solid var(--line); color:var(--text);
     font-size:17px; padding:13px 14px; border-radius:12px; outline:none;
   }
+  input[type=datetime-local]{font-size:15px; padding:11px 10px;}
   input:focus{border-color:var(--accent);}
   input.err{border-color:var(--red);}
 
@@ -87,8 +89,12 @@
   .job .brk .l{flex:1;}
   .job .brk .t{color:var(--muted); font-variant-numeric:tabular-nums;}
   .job .brk .c{min-width:80px; text-align:right; font-weight:600; color:var(--text); font-variant-numeric:tabular-nums;}
-  .job .delrow{display:flex; justify-content:flex-end; margin-top:2px;}
+  .job .place{color:var(--accent); font-size:12.5px; margin-top:3px;}
+  .job .delrow{display:flex; justify-content:flex-end; gap:8px; margin-top:2px;}
   .job .del{background:none; color:var(--muted); font-size:13px; padding:4px 6px; margin:-2px -6px -2px 0;}
+  .job .edit{background:none; color:var(--accent); font-size:13px; padding:4px 6px;}
+  .job .editbox{margin-top:10px; border-top:1px dashed var(--line); padding-top:4px;}
+  .job .editbox label{margin-top:10px;}
   .empty{color:var(--muted); text-align:center; padding:24px 0; font-size:14px;}
 
   .settings-toggle{background:none; color:var(--muted); font-size:13px; padding:4px;}
@@ -452,7 +458,7 @@
       }
       active = { cliente: nome, start: Date.now(), andata: andata, ritorno: ritorno, pos: null };
       save(LS_ACTIVE, active);
-      if(andata||ritorno) readClientPos();
+      readClientPos(); // legge sempre la posizione: serve per i viaggi e per il luogo del cliente
       renderActiveState();
     } else {
       // FINITO
@@ -495,6 +501,8 @@
     const job = {
       id: Date.now(),
       cliente: active.cliente,
+      luogo: "",
+      pos: active.pos || null,
       start: active.start, end: end, ms: ms,
       rate: rate, ivaP: ivaP,
       lavoro: lavoroCost,
@@ -504,6 +512,7 @@
     };
     jobs.unshift(job);
     save(LS_JOBS, jobs);
+    if(job.pos) cercaLuogo(job); // trova l'indirizzo del cliente in sottofondo
     active = null;
     localStorage.removeItem(LS_ACTIVE);
     clienteEl.value = "";
@@ -511,6 +520,37 @@
     renderActiveState();
     renderList();
     if(gpsFallito) alert("⚠ Non sono riuscito a leggere il GPS: lavoro salvato SENZA viaggi.\nPuoi aggiungerli a mano in fattura.");
+  }
+
+  // trasforma la posizione GPS del cliente in un indirizzo leggibile (in sottofondo)
+  async function cercaLuogo(job){
+    try{
+      const r = await fetch("https://nominatim.openstreetmap.org/reverse?format=json&accept-language=it&lat="+job.pos.lat+"&lon="+job.pos.lon);
+      const d = await r.json();
+      if(d && d.display_name){
+        job.luogo = d.display_name.split(",").slice(0,3).join(",").trim();
+        save(LS_JOBS, jobs);
+        renderList();
+      }
+    }catch(e){ /* senza internet il luogo resta vuoto: si può inserire con ✏ Modifica */ }
+  }
+  // data/ora nel formato dei campi di modifica (ora locale)
+  function toLocalInput(ts){
+    const d = new Date(ts);
+    return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+"T"+pad(d.getHours())+":"+pad(d.getMinutes());
+  }
+  // ricalcola tutti gli importi di un lavoro dopo una modifica manuale degli orari
+  // (i minuti di viaggio registrati restano quelli; arrotondamento unico sul totale)
+  function ricalcolaJob(j){
+    j.ms = j.end - j.start;
+    const v = j.viaggio;
+    const minViaggi = v ? ((v.minAndata||0) + (v.minRitorno||0)) : 0;
+    const rate = j.rate||0;
+    j.minFatturati = billableHours(j.ms + minViaggi*60000) * 60;
+    j.lavoro = (j.minFatturati - minViaggi)/60 * rate;
+    j.imponibile = j.lavoro + (v ? (v.cost||0) : 0);
+    j.iva = j.imponibile * (j.ivaP||0)/100;
+    j.totale = j.imponibile + j.iva;
   }
 
   // ---- storico ----
@@ -546,22 +586,63 @@
       }
       el.innerHTML =
         '<div class="top"><span class="name"></span><span class="cost">'+euro(j.totale||0)+'</span></div>'+
-        '<div class="meta"><div class="when"></div></div>'+
+        '<div class="meta"><div class="when"></div><div class="place hidden">📍 <span></span></div></div>'+
         brkHtml+
         '<div class="meta">'+
           tripHtml+
           '<div class="iva">'+(j.minFatturati ? "⏱ Fatturato "+fmtMin(j.minFatturati)+"  ·  " : "")+'Imponibile '+euro(j.imponibile||0)+'  ·  + IVA '+(j.ivaP||0)+'% '+euro(j.iva||0)+'</div>'+
         '</div>'+
-        '<div class="delrow"><button class="del">Elimina</button></div>';
+        '<div class="delrow"><button class="edit">✏ Modifica</button><button class="del">Elimina</button></div>'+
+        '<div class="editbox hidden">'+
+          '<label>Cliente</label><input type="text" class="e-cliente">'+
+          '<label>Luogo</label><input type="text" class="e-luogo" placeholder="Es. Via Roma 5, Milano">'+
+          '<div class="row">'+
+            '<div><label>Arrivo</label><input type="datetime-local" class="e-start"></div>'+
+            '<div><label>Fine</label><input type="datetime-local" class="e-end"></div>'+
+          '</div>'+
+          '<div class="row" style="margin-top:12px;">'+
+            '<button class="sede-btn e-salva">✔ Salva</button>'+
+            '<button class="sede-btn e-annulla">✖ Annulla</button>'+
+          '</div>'+
+        '</div>';
       el.querySelector(".name").textContent = j.cliente;
       el.querySelector(".when").textContent =
         fmtDate(j.start) + " → " + fmtDate(j.end) + "  ·  " + (j.rate||0) + "€/h";
+      if(j.luogo){
+        el.querySelector(".place").classList.remove("hidden");
+        el.querySelector(".place span").textContent = j.luogo;
+      }
       el.querySelector(".del").addEventListener("click", ()=>{
         if(confirm("Eliminare «"+j.cliente+"»?")){
           jobs = jobs.filter(x=>x.id!==j.id);
           save(LS_JOBS, jobs);
           renderList();
         }
+      });
+      const box = el.querySelector(".editbox");
+      el.querySelector(".edit").addEventListener("click", ()=>{
+        box.classList.toggle("hidden");
+        if(!box.classList.contains("hidden")){
+          box.querySelector(".e-cliente").value = j.cliente;
+          box.querySelector(".e-luogo").value = j.luogo || "";
+          box.querySelector(".e-start").value = toLocalInput(j.start);
+          box.querySelector(".e-end").value = toLocalInput(j.end);
+        }
+      });
+      box.querySelector(".e-annulla").addEventListener("click", ()=> box.classList.add("hidden"));
+      box.querySelector(".e-salva").addEventListener("click", ()=>{
+        const s = new Date(box.querySelector(".e-start").value).getTime();
+        const f = new Date(box.querySelector(".e-end").value).getTime();
+        if(isNaN(s) || isNaN(f)){ alert("Controlla gli orari di arrivo e fine."); return; }
+        if(f <= s){ alert("L'orario di fine deve essere dopo l'arrivo."); return; }
+        const nuovoNome = box.querySelector(".e-cliente").value.trim();
+        if(!nuovoNome){ alert("Il nome del cliente non può restare vuoto."); return; }
+        j.cliente = nuovoNome;
+        j.luogo = box.querySelector(".e-luogo").value.trim();
+        j.start = s; j.end = f;
+        ricalcolaJob(j);
+        save(LS_JOBS, jobs);
+        renderList();
       });
       lista.appendChild(el);
     });
@@ -607,11 +688,12 @@
   $("exportBtn").addEventListener("click", ()=>{
     if(jobs.length===0){ alert("Nessun dato da esportare."); return; }
     const num = n => (Math.round(n*100)/100).toFixed(2).replace(".",",");
-    const rows = [["Cliente","Inizio","Fine","Durata lavoro","Tariffa €/h","Lavoro €","Viaggio min","Viaggio km","Viaggio €","Viaggio calcolo","Imponibile €","IVA %","IVA €","Totale €"]];
+    const rows = [["Cliente","Luogo","Inizio","Fine","Durata lavoro","Tariffa €/h","Lavoro €","Viaggio min","Viaggio km","Viaggio €","Viaggio calcolo","Imponibile €","IVA %","IVA €","Totale €"]];
     jobs.slice().reverse().forEach(j=>{
       const v = j.viaggio;
       rows.push([
         j.cliente,
+        j.luogo || "",
         new Date(j.start).toLocaleString("it-IT"),
         new Date(j.end).toLocaleString("it-IT"),
         fmtDur(j.ms),
