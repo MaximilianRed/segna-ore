@@ -80,6 +80,7 @@
   .job .top{display:flex; justify-content:space-between; align-items:baseline; gap:8px;}
   .job .name{font-weight:600; font-size:16px;}
   .job .cost{font-weight:700; font-size:18px; color:var(--green); white-space:nowrap;}
+  .job .cost small{font-size:12px; font-weight:600;}
   .job .meta{color:var(--muted); font-size:12.5px; margin-top:5px; line-height:1.6;}
   .job .meta .iva{color:#cbd5e1;}
   .job .meta .trip{color:#fbbf24;}
@@ -209,7 +210,7 @@
 </div>
 <div id="lista"></div>
 
-<div class="ver">Sul Posto · v1.25 · 14/07/2026 · MXM</div>
+<div class="ver">Sul Posto · v1.26 · 14/07/2026 · MXM</div>
 
 <script>
 (function(){
@@ -616,7 +617,7 @@
       // Ogni voce mostra SOLO i propri valori REALI: minuti veri e costi veri, niente
       // riempimenti spalmati qua e là. L'arrotondamento allo scaglione (regola del cliente:
       // "l'arrotondamento lo fai dopo") si applica UNA volta, alla fine, sul totale —
-      // ed è leggibile nella riga «⏱ Fatturare … (reali: …)» sotto le voci.
+      // ed è leggibile nella riga «⏱ Fatturare … (misurati: …)» sotto le voci.
       const rateLav = Number(j.rate)||0;
       if(j.chiamata) brkHtml += riga("📞 Chiamata", "fisso", euro(j.chiamata));
       if(v && v.andata) brkHtml += riga("🚗 Andata", fmtMin(v.minAndata), euro(v.minAndata/60*(v.rate||0)));
@@ -628,14 +629,14 @@
           +(Math.round(v.km*10)/10).toLocaleString("it-IT")+" km a tratta</div>";
       }
       el.innerHTML =
-        '<div class="top"><span class="name"></span><span class="cost">'+euro(j.totale||0)+'</span></div>'+
+        '<div class="top"><span class="name"></span><span class="cost">'+euro(j.imponibile||0)+' <small>+ IVA</small></span></div>'+
         '<div class="meta"><div class="when"></div><div class="place hidden">📍 <span></span></div></div>'+
         brkHtml+
         '<div class="meta">'+
           tripHtml+
           '<div class="iva">'+(j.minFatturati ? "⏱ Fatturare "+fmtQuarti(j.minFatturati)
-            +" (reali: "+fmtMin(j.ms/60000 + (v ? (v.minAndata||0)+(v.minRitorno||0) : 0))+")<br>" : "")
-            +'Imponibile '+euro(j.imponibile||0)+'  ·  + IVA '+(j.ivaP||0)+'% '+euro(j.iva||0)+'</div>'+
+            +" (misurati: "+fmtMin(j.ms/60000 + (v ? (v.minAndata||0)+(v.minRitorno||0) : 0))+")<br>" : "")
+            +'Intervento: '+euro(j.imponibile||0)+' + IVA '+(j.ivaP||0)+'% '+euro(j.iva||0)+'  ·  Totale: '+euro(j.totale||0)+'</div>'+
         '</div>'+
         '<div class="delrow"><button class="edit">✏ Modifica</button><button class="del">Elimina</button></div>'+
         '<div class="editbox hidden">'+
