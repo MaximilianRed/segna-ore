@@ -210,7 +210,7 @@
 </div>
 <div id="lista"></div>
 
-<div class="ver">Sul Posto · v1.27 · 14/07/2026 · MXM</div>
+<div class="ver">Sul Posto · v1.28 · 15/07/2026 · MXM</div>
 
 <script>
 (function(){
@@ -260,6 +260,16 @@
     if(h>0 && m>0) return ore+" e "+minuti;
     if(h>0) return ore;
     return minuti;
+  }
+  // tempo compatto per la parentesi: "38 min.", "1 ora e 3 min.", "2 ore"
+  function fmtMinBrevi(min){
+    if(min < 1) return "meno di 1 min.";
+    min = Math.round(min);
+    const h = Math.floor(min/60), m = min%60;
+    const ore = h===1 ? "1 ora" : h+" ore";
+    if(h>0 && m>0) return ore+" e "+m+" min.";
+    if(h>0) return ore;
+    return m+" min.";
   }
   // tempo fatturato in quarti d'ora, come si dice a voce: "un quarto d'ora",
   // "mezz'ora", "tre quarti d'ora", "1 ora e un quarto", "1 ora e mezza", "2 ore"
@@ -634,8 +644,10 @@
         brkHtml+
         '<div class="meta">'+
           tripHtml+
-          '<div class="iva">'+(j.minFatturati ? "⏱ Fatturare "+fmtQuarti(j.minFatturati)
-            +" ("+fmtMin(j.ms/60000 + (v ? (v.minAndata||0)+(v.minRitorno||0) : 0))+")<br>" : "")
+          '<div class="iva">'+(j.minFatturati ? "⏱ Fatturare: "
+            +(q => q.charAt(0).toUpperCase()+q.slice(1))(fmtQuarti(j.minFatturati))
+            +" ("+fmtMinBrevi(j.ms/60000 + (v ? (v.minAndata||0)+(v.minRitorno||0) : 0))+")"
+            +(j.chiamata ? " + Diritto Fisso di chiamata" : "")+"<br>" : "")
             +'Intervento: '+euro(j.imponibile||0)+' + IVA '+(j.ivaP||0)+'% '+euro(j.iva||0)+'  ·  Totale: '+euro(j.totale||0)+'</div>'+
         '</div>'+
         '<div class="delrow"><button class="edit">✏ Modifica</button><button class="del">Elimina</button></div>'+
