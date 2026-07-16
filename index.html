@@ -210,7 +210,7 @@
 </div>
 <div id="lista"></div>
 
-<div class="ver">Sul Posto · v1.30 · 15/07/2026 · MXM</div>
+<div class="ver">Sul Posto · v1.31 · 15/07/2026 · MXM</div>
 
 <script>
 (function(){
@@ -635,7 +635,7 @@
       if(v && v.ritorno) brkHtml += riga("🏠 Ritorno", fmtMin(v.minRitorno), euro(v.minRitorno/60*(v.rate||0)));
       let tripHtml = "";
       if(v && (v.andata || v.ritorno)){
-        tripHtml = '<div class="trip">'+(v.metodo==="percorso" ? "🗺 percorso reale" : "≈ stima")+" · "
+        tripHtml = '<div class="trip">'+(v.metodo==="manuale" ? "✍ corretto a mano" : v.metodo==="percorso" ? "🗺 percorso reale" : "≈ stima")+" · "
           +(Math.round(v.km*10)/10).toLocaleString("it-IT")+" km a tratta</div>";
       }
       el.innerHTML =
@@ -663,6 +663,11 @@
             '<label class="chk"><input type="checkbox" class="e-andata"> 🚗 Andata</label>'+
             '<label class="chk"><input type="checkbox" class="e-ritorno"> 🏠 Ritorno</label>'+
             '<label class="chk"><input type="checkbox" class="e-chiamata"> 📞 Chiamata</label>'+
+          '</div>'+
+          '<div class="row e-viaggio-dati hidden" style="margin-top:10px;">'+
+            '<div style="flex:1;"><label>🚗 Andata (min.)</label><input type="number" class="e-minandata" min="0" step="1" inputmode="numeric"></div>'+
+            '<div style="flex:1;"><label>🏠 Ritorno (min.)</label><input type="number" class="e-minritorno" min="0" step="1" inputmode="numeric"></div>'+
+            '<div style="flex:1;"><label>Km a tratta</label><input type="number" class="e-vkm" min="0" step="0.1" inputmode="decimal"></div>'+
           '</div>'+
           '<div class="hint e-hint-viaggi hidden">Per questo lavoro non ci sono dati di viaggio (il GPS non era disponibile), quindi Andata e Ritorno non si possono attivare.</div>'+
           '<div class="e-partenza-box hidden" style="margin-top:14px; border-top:1px dashed var(--line); padding-top:10px;">'+
@@ -708,6 +713,16 @@
           const senzaDatiViaggio = !minLeg;
           eA.disabled = senzaDatiViaggio; eR.disabled = senzaDatiViaggio;
           box.querySelector(".e-hint-viaggi").classList.toggle("hidden", !senzaDatiViaggio);
+          // minuti e km del viaggio modificabili a mano (le mappe a volte sbagliano i tempi)
+          box.querySelector(".e-viaggio-dati").classList.toggle("hidden", senzaDatiViaggio);
+          if(!senzaDatiViaggio){
+            const eMinA = box.querySelector(".e-minandata"), eMinR = box.querySelector(".e-minritorno"), eKm = box.querySelector(".e-vkm");
+            eMinA.value = Math.round(vv.andata ? vv.minAndata : minLeg);
+            eMinR.value = Math.round(vv.ritorno ? vv.minRitorno : minLeg);
+            eKm.value = Math.round((vv.km||0)*10)/10;
+            // memorizza i valori mostrati: solo se l'utente li cambia il viaggio diventa "corretto a mano"
+            eMinA.dataset.orig = eMinA.value; eMinR.dataset.orig = eMinR.value; eKm.dataset.orig = eKm.value;
+          }
           box.querySelector(".e-chiamata").checked = (j.chiamata||0) > 0;
           // partenza modificabile solo se il lavoro ha già dati di viaggio (serve la posizione del cliente)
           const partenzaBox = box.querySelector(".e-partenza-box");
@@ -776,15 +791,30 @@
         j.cliente = nuovoNome;
         j.luogo = box.querySelector(".e-luogo").value.trim();
         j.start = s; j.end = f;
-        // viaggi: riattiva/disattiva le tratte usando i minuti registrati dal GPS
+        // viaggi: riattiva/disattiva le tratte; minuti e km si possono correggere a mano
         const vv = j.viaggio;
         if(vv){
-          const minLeg = vv.minLeg || vv.minAndata || vv.minRitorno || 0;
-          vv.minLeg = minLeg;
           vv.andata = box.querySelector(".e-andata").checked;
           vv.ritorno = box.querySelector(".e-ritorno").checked;
-          vv.minAndata = vv.andata ? minLeg : 0;
-          vv.minRitorno = vv.ritorno ? minLeg : 0;
+          const eMinA = box.querySelector(".e-minandata"), eMinR = box.querySelector(".e-minritorno"), eKm = box.querySelector(".e-vkm");
+          const corretto = eMinA.dataset.orig !== undefined &&
+            (eMinA.value !== eMinA.dataset.orig || eMinR.value !== eMinR.dataset.orig || eKm.value !== eKm.dataset.orig);
+          if(corretto){
+            const mA = Math.max(0, Number(eMinA.value)||0);
+            const mR = Math.max(0, Number(eMinR.value)||0);
+            const nkm = Math.max(0, Number(eKm.value)||0);
+            vv.minAndata = vv.andata ? mA : 0;
+            vv.minRitorno = vv.ritorno ? mR : 0;
+            vv.minLeg = mA || mR || vv.minLeg || 0; // per riattivare in futuro una tratta tolta
+            if(nkm) vv.km = nkm;
+            vv.metodo = "manuale";
+          } else {
+            // niente toccato: conserva i minuti registrati (anche se diversi tra andata e ritorno)
+            const minLeg = vv.minLeg || vv.minAndata || vv.minRitorno || 0;
+            vv.minLeg = minLeg;
+            vv.minAndata = vv.andata ? (vv.minAndata || minLeg) : 0;
+            vv.minRitorno = vv.ritorno ? (vv.minRitorno || minLeg) : 0;
+          }
           vv.cost = (vv.minAndata + vv.minRitorno)/60 * (vv.rate||0);
         }
         // diritto di chiamata: se lo riattivi prende l'importo attuale delle impostazioni
@@ -856,7 +886,7 @@
         v ? String(Math.round(v.minAndata+v.minRitorno)) : "0",
         v ? num(v.km) : "0",
         v ? num(v.cost) : "0,00",
-        v ? (v.metodo==="percorso" ? "percorso reale" : "stima") : "",
+        v ? (v.metodo==="manuale" ? "corretto a mano" : v.metodo==="percorso" ? "percorso reale" : "stima") : "",
         num(j.imponibile||0),
         String(j.ivaP||0).replace(".",","),
         num(j.iva||0),
