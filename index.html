@@ -174,6 +174,12 @@
     <div class="hint">Il tempo di viaggio è calcolato sul <b>percorso stradale reale</b> (serve internet al momento del «Finito»). Senza internet: stima in linea d'aria con la velocità media.</div>
 
     <div style="margin-top:14px;">
+      <label for="tomtomKey">Chiave TomTom (facoltativa)</label>
+      <input type="text" id="tomtomKey" placeholder="Incolla qui la tua chiave API TomTom" autocomplete="off">
+      <div class="hint">Con la chiave, i viaggi li calcola <b>TomTom col traffico in tempo reale</b> (tempi più realistici). Senza, si usa OpenStreetMap come sempre. La chiave resta salvata <b>solo su questo dispositivo</b> (e nei tuoi backup): non finisce nel codice pubblico.</div>
+    </div>
+
+    <div style="margin-top:14px;">
       <label for="sedeIndirizzo">Posizione della sede (serve per calcolare i viaggi)</label>
       <input type="text" id="sedeIndirizzo" placeholder="Es. Via Roma 5, Milano" autocomplete="off">
       <div class="row" style="margin-top:8px;">
@@ -210,7 +216,7 @@
 </div>
 <div id="lista"></div>
 
-<div class="ver">Sul Posto · v1.31 · 15/07/2026 · MXM</div>
+<div class="ver">Sul Posto · v1.32 · 15/07/2026 · MXM</div>
 
 <script>
 (function(){
@@ -225,7 +231,7 @@
         clienteEl = $("cliente"), dot = $("statusDot"),
         chkAndata = $("chkAndata"), chkRitorno = $("chkRitorno"), chkChiamata = $("chkChiamata");
 
-  const DEFAULTS = {rate:60, round:15, iva:22, travelRate:60, speed:50, chiamata:20, sede:null, v:2};
+  const DEFAULTS = {rate:60, round:15, iva:22, travelRate:60, speed:50, chiamata:20, sede:null, tomtomKey:"", v:2};
   let cfg = load(LS_CFG, null);
   if(!cfg || cfg.v !== 2){ cfg = Object.assign({}, DEFAULTS); }
   else { cfg = Object.assign({}, DEFAULTS, cfg); } // aggiunge i campi nuovi alle config vecchie
@@ -303,7 +309,27 @@
   }
   // percorso stradale reale sede→cliente (OSRM/OpenStreetMap, serve internet).
   // Ritorna {km, min} oppure null se non raggiungibile.
+  // percorso via TomTom (solo se l'utente ha messo la sua chiave in ⚙): tempi col traffico reale
+  async function percorsoTomTom(a, b){
+    const key = (cfg.tomtomKey||"").trim();
+    if(!key) return null;
+    const url = "https://api.tomtom.com/routing/1/calculateRoute/"
+      + a.lat + "," + a.lon + ":" + b.lat + "," + b.lon
+      + "/json?key=" + encodeURIComponent(key) + "&traffic=true";
+    const ctrl = new AbortController();
+    const t = setTimeout(()=>ctrl.abort(), 8000);
+    try{
+      const r = await fetch(url, {signal: ctrl.signal});
+      const j = await r.json();
+      const s = j.routes && j.routes[0] && j.routes[0].summary;
+      if(s && s.lengthInMeters != null) return { km: s.lengthInMeters/1000, min: s.travelTimeInSeconds/60 };
+      return null;
+    }catch(e){ return null; }
+    finally{ clearTimeout(t); }
+  }
   async function percorsoReale(a, b){
+    const tt = await percorsoTomTom(a, b); // prima scelta: TomTom (se c'è la chiave)
+    if(tt) return tt;
     const url = "https://router.project-osrm.org/route/v1/driving/"
       + a.lon + "," + a.lat + ";" + b.lon + "," + b.lat + "?overview=false";
     const ctrl = new AbortController();
@@ -349,6 +375,7 @@
   $("travelRate").value = cfg.travelRate;
   $("speed").value = cfg.speed;
   $("chiamata").value = cfg.chiamata;
+  $("tomtomKey").value = cfg.tomtomKey || "";
   function refreshRateLabel(){
     $("rateLabel").textContent = (Number(cfg.rate)||0)+" €/h + IVA "+(Number(cfg.iva)||0)+"%";
   }
@@ -372,6 +399,7 @@
   $("travelRate").addEventListener("input", e=>{ cfg.travelRate = parseFloat(e.target.value)||0; save(LS_CFG,cfg); });
   $("speed").addEventListener("input", e=>{ cfg.speed = parseInt(e.target.value)||0; save(LS_CFG,cfg); });
   $("chiamata").addEventListener("input", e=>{ cfg.chiamata = parseFloat(e.target.value)||0; save(LS_CFG,cfg); if(active) updateTimer(); });
+  $("tomtomKey").addEventListener("input", e=>{ cfg.tomtomKey = e.target.value.trim(); save(LS_CFG,cfg); });
 
   // ---- GPS ----
   function gpsErrText(err){
